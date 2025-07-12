@@ -3,15 +3,17 @@
 #include "hardware/spi.h"
 #include "hardware/uart.h"
 #include "hardware/dma.h"
+#include "hardware/gpio.h"
+#include "MT6701.pio.h"
 
 // --- 配置 ---
 // 使用 SPI0 实例
 #define SPI_PORT spi0
 
 // 定义引脚 (根据您的硬件连接修改)
-#define PIN_MISO 16 // SPI0 RX
-#define PIN_SCK  18 // SPI0 SCK
-#define PIN_CS   17 // Chip Select, 使用普通 GPIO
+#define PIN_MISO 6 // SPI0 RX
+#define PIN_SCK  7 // SPI0 SCK
+#define PIN_CS   8 // Chip Select, 使用普通 GPIO
 
 // MT6701 数据位数 (根据您的传感器型号和配置)
 #define MT6701_DATA_BITS 14
@@ -32,6 +34,13 @@ private:
     int dataChannelTX; // DMA channel for SPI data transfer
     int dataChannelRX; // DMA channel for SPI data transfer
     
+    PIO pio;
+    uint sm;
+    uint dmaChannel;
+    uint offset;
+
+
+
 public:
     //uint8_t rxBuf[MT6701_BUFFER_SIZE] __attribute__((aligned(MT6701_BUFFER_SIZE * 2)));
     uint8_t rxBuf[MT6701_BUFFER_SIZE]; // 接收数据缓冲区
@@ -47,6 +56,9 @@ public:
 
     // SPI initialisation. This example will use SPI at 1MHz.
     void initSSI();
+    void PIOinit();
+
+
     // Read data from the sensor
     uint32_t readData();
     // Chip select methods
@@ -76,6 +88,9 @@ public:
 
     // 处理原始数据
     uint32_t DMAProcessData();
+
+    // 使用PIO与DMA读取数据
+    uint32_t readWithPIO();
 };
 
 

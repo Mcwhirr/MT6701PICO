@@ -1,34 +1,101 @@
-;
-; Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
-;
-; SPDX-License-Identifier: BSD-3-Clause
-;
+.pio_version 0
 
-; SET pin 0 should be mapped to your LED GPIO
+.program ssi_CPOL0_CPHA1_WITH_CS
+.side_set 2 opt
 
-.program blink
-    pull block
-    out y, 32
 .wrap_target
-    mov x, y
-    set pins, 1   ; Turn LED on
-lp1:
-    jmp x-- lp1   ; Delay for (x + 1) cycles, x is a 32 bit number
-    mov x, y
-    set pins, 0   ; Turn LED off
-lp2:
-    jmp x-- lp2   ; Delay for the same number of cycles again
-.wrap             ; Blink forever!
+    ; 初始化X寄存器为23，用于24位传输 (0到23)
+    ; 将CSn拉高 (不活跃)，SCK拉低 (空闲状态)，保持7个PIO时钟周期
+    set x, 23 side 0x2[3]    
 
+    ; 将CSn拉低 (激活)，SCK保持低电平 (CPOL=0的空闲)，准备传输第一个位
+    ; 保持2个PIO时钟周期，确保CSn建立时间
+    nop side 0x0[2]         
+
+bitloop:
+    ; 将CSn保持低电平，SCK拉高 (第一个时钟沿，CPHA=1下数据在此处更新)
+    ; 保持5个PIO时钟周期
+    nop side 0x1 [3]        
+
+    ; 将CSn保持低电平，SCK拉低 (第二个时钟沿，CPHA=1下在此处采样数据)
+    ; 从输入引脚读取1位数据到ISR，保持2个PIO时钟周期
+    in pins, 1 side 0x0 [1] 
+    
+    ; 递减X寄存器，如果X不为零则跳转回bitloop
+    ; 同时保持CSn低电平，SCK低电平，为下一个位的传输做准备
+    ; 保持2个PIO时钟周期
+    jmp x-- bitloop side 0x0[1] 
+
+    ; 所有位传输完成后，将CSn拉高 (不活跃)，SCK拉低 (恢复空闲状态)
+    ; 保持4个PIO时钟周期，确保CSn保持时间
+    nop side 0x2 [3]        
+.wrap
 
 % c-sdk {
-// this is a raw helper function for use by the user which sets up the GPIO output, and configures the SM to output on a particular pin
+static inline void ssi_CPOL0_CPHA1_WITH_CS_Init(PIO pio, uint sm, uint offset, uint data_pin, uint clk_pin, float clk_div) {
+    // 假设 CSn 引脚总是紧邻 clk_pin，并且是 clk_pin + 1。这是 SPI 的常见约定。
+    uint cs_pin = clk_pin + 1; 
 
-void blink_program_init(PIO pio, uint sm, uint offset, uint pin) {
-   pio_gpio_init(pio, pin);
-   pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
-   pio_sm_config c = blink_program_get_default_config(offset);
-   sm_config_set_set_pins(&c, pin, 1);
-   pio_sm_init(pio, sm, offset, &c);
+    // 1. 初始化所有相关的 GPIO 引脚，让它们由 PIO 模块控制。
+    // 确保这些引脚没有被其他外设使用。
+    pio_gpio_init(pio, data_pin); // 数据引脚 (MISO) 将用作输入。
+    pio_gpio_init(pio, clk_pin);  // 时钟引脚 (SCK) 将用作输出 (side-set 0)。
+    pio_gpio_init(pio, cs_pin);   // 片选引脚 (CSn) 将用作输出 (side-set 1)。
+
+    // 2. 设置引脚方向。
+    // MISO 引脚 (data_pin) 必须设置为输入。
+    pio_sm_set_consecutive_pindirs(pio, sm, data_pin, 1, false);
+    // SCK 引脚 (clk_pin) 和 CSn 引脚 (cs_pin) 由 side-set 控制，
+    // 因此从 PIO 的角度来看，它们应该设置为输出。
+    pio_sm_set_consecutive_pindirs(pio, sm, clk_pin, 1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, cs_pin, 1, true);
+
+    // 3. 获取 PIO 程序的默认配置。
+    pio_sm_config c = ssi_CPOL0_CPHA1_WITH_CS_program_get_default_config(offset);
+    
+    // 4. 配置边沿设置引脚。
+    // PIO 程序使用 'side_set 2'。我们将 clk_pin 映射到 side_set_0，cs_pin 映射到 side_set_1。
+    // 'clk_pin' 是边沿设置输出的基准引脚。
+    sm_config_set_sideset_pins(&c, clk_pin);
+
+    // 5. 为 'in pins, 1' 指令配置输入引脚映射。
+    sm_config_set_in_pins(&c, data_pin);
+
+    // 6. 配置 FIFO 合并：将 TX 和 RX FIFO 合并成一个更大的 RX FIFO。
+    // 这对于只接收操作有利，可以提供更大的缓冲区空间。
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+
+    // 7. 配置 PIO 状态机的时钟分频值。这会影响实际的 SCK 频率。
+    sm_config_set_clkdiv(&c, clk_div);
+
+    // 8. 配置输入移位寄存器 (ISR) 用于数据接收。
+    // shift_right=false: 将新位移入 ISR 的 LSB 端 (从设备接收到的是 MSB 在前)。
+    // autopush=true: 当达到阈值时，自动将 ISR 内容推送到 RX FIFO。
+    // push_threshold=24: 在 ISR 中累积 24 位后推送到 FIFO。
+    // 这与你的 24 位数据传输完美匹配。
+    sm_config_set_in_shift(&c, false, true, 24);
+    
+    // 9. 将配置加载到状态机。
+    pio_sm_init(pio, sm, offset, &c);
+    
+    // 10. 启用状态机。
+    pio_sm_set_enabled(pio, sm, true);
 }
+
+    static inline uint32_t ssi_CPOL0_CPHA1_WITH_CS_Read(PIO pio, uint sm) {
+            // 等待接收FIFO中有数据
+        while (!pio_sm_is_rx_fifo_full(pio, sm));
+        // 从RX FIFO读取数据
+        return pio_sm_get(pio, sm);
+    }
+
+    // SM is done when it stalls on an empty FIFO
+    static inline void ssi_CPOL0_CPHA1_WITH_CS_Wait_Idle(PIO pio, uint sm) {
+        //// 设置FDEBUG寄存器的RXSTALL位，用于监控指定状态机
+        uint32_t sm_stall_mask = 1u << (sm + PIO_FDEBUG_RXSTALL_LSB);
+        pio->fdebug = sm_stall_mask;
+        while (!(pio->fdebug & sm_stall_mask));
+    }
+
+
 %}

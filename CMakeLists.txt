@@ -47,7 +47,11 @@ add_executable(FOCProject
 pico_set_program_name(FOCProject "FOCProject")
 pico_set_program_version(FOCProject "0.1")
 
-# Generate PIO header
+# 生成 PIO 头文件
+# 更改 pico_generate_pio_header 的第二个参数，指定生成的头文件路径。
+# 这里将输出路径设置为项目根目录下的 MT6701/ 目录，文件名仍为 MT6701.pio.h
+pico_generate_pio_header(FOCProject ${CMAKE_SOURCE_DIR}/MT6701/MT6701.pio)
+
 
 
 # Modify the below lines to enable/disable output over UART/USB
@@ -70,11 +74,7 @@ target_link_libraries(FOCProject
         hardware_spi
         hardware_pio
         hardware_dma
-        
-        
-        
         pico_stdlib
-        
         )
 
 pico_add_extra_outputs(FOCProject)

@@ -1,4 +1,5 @@
 #include "MT6701.h"
+#include "MT6701.pio.h"
 
 MT6701::MT6701(/* args */)
 {
@@ -17,6 +18,23 @@ void MT6701::initSSI()
     gpio_init(PIN_CS); // 初始化手动控制的 CS 引脚
     gpio_set_dir(PIN_CS, GPIO_OUT);
     gpio_put(PIN_CS, 1); // 默认设为高电平 (不选中)
+
+
+}
+
+void MT6701::PIOinit()
+{
+    pio = pio0;
+    //sm = 0;
+    dmaChannel = 0;
+    // &PIOTest_program 是 PIO 程序的汇编代码地址。
+    // 使用 pio_add_program 函数将程序（汇编器转换后的二进制代码）加载到 PIO。
+    // 该函数会返回程序的起始位置，我们将其保存在 offset 变量中。
+    offset = pio_add_program(pio, &ssi_CPOL0_CPHA1_WITH_CS_program);
+    sm = pio_claim_unused_sm(pio,true);
+
+    //pio选择，状态机，数据引脚，时钟引脚，时钟分频
+    ssi_CPOL0_CPHA1_WITH_CS_Init(pio,sm,offset, PIN_MISO, PIN_SCK, 20.f);
 
 
 }
@@ -170,6 +188,12 @@ uint32_t MT6701::DMAProcessData()
 {
     raw_value = (rxBuf[0] << 16) | (rxBuf[1] << 8) | rxBuf[2];
     
+    return raw_value;
+}
+
+uint32_t MT6701::readWithPIO()
+{
+    raw_value = ssi_CPOL0_CPHA1_WITH_CS_Read(pio,sm);
     return raw_value;
 }
 
