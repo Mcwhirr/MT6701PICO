@@ -37,7 +37,6 @@ static inline void ssi_CPOL0_CPHA1_WITH_CS_Init(PIO pio, uint sm, uint offset, u
     uint cs_pin = clk_pin + 1; 
 
     // 1. 初始化所有相关的 GPIO 引脚，让它们由 PIO 模块控制。
-    // 确保这些引脚没有被其他外设使用。
     pio_gpio_init(pio, data_pin); // 数据引脚 (MISO) 将用作输入。
     pio_gpio_init(pio, clk_pin);  // 时钟引脚 (SCK) 将用作输出 (side-set 0)。
     pio_gpio_init(pio, cs_pin);   // 片选引脚 (CSn) 将用作输出 (side-set 1)。
@@ -45,8 +44,7 @@ static inline void ssi_CPOL0_CPHA1_WITH_CS_Init(PIO pio, uint sm, uint offset, u
     // 2. 设置引脚方向。
     // MISO 引脚 (data_pin) 必须设置为输入。
     pio_sm_set_consecutive_pindirs(pio, sm, data_pin, 1, false);
-    // SCK 引脚 (clk_pin) 和 CSn 引脚 (cs_pin) 由 side-set 控制，
-    // 因此从 PIO 的角度来看，它们应该设置为输出。
+    // SCK 引脚 (clk_pin) 和 CSn 引脚 (cs_pin) 由 side-set 控制，从 PIO 的角度来看，它们应该设置为输出。
     pio_sm_set_consecutive_pindirs(pio, sm, clk_pin, 1, true);
     pio_sm_set_consecutive_pindirs(pio, sm, cs_pin, 1, true);
 
@@ -72,8 +70,7 @@ static inline void ssi_CPOL0_CPHA1_WITH_CS_Init(PIO pio, uint sm, uint offset, u
     // shift_right=false: 将新位移入 ISR 的 LSB 端 (从设备接收到的是 MSB 在前)。
     // autopush=true: 当达到阈值时，自动将 ISR 内容推送到 RX FIFO。
     // push_threshold=24: 在 ISR 中累积 24 位后推送到 FIFO。
-    // 这与你的 24 位数据传输完美匹配。
-    sm_config_set_in_shift(&c, false, true, 24);
+    sm_config_set_in_shift(&c, false, true, 24); //有in就有out方向别搞反了
     
     // 9. 将配置加载到状态机。
     pio_sm_init(pio, sm, offset, &c);

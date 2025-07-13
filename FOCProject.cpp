@@ -38,7 +38,8 @@ int main() {
 
     MT6701& sensor = MT6701::getInstance(); // 获取单例实例
     //sensor.initSSI(); // 初始化 SP
-    sensor.PIOinit();
+    //sensor.initPIO();  //PIO初始化
+    sensor.initSSI();
 
     // 主循环
     while (1) {
@@ -49,13 +50,13 @@ int main() {
         uint32_t getRaw = sensor.getRawValue(); // 获取原始数据值
         printf("Raw: %-7lu | Angle: %.2f degrees | MagneticStatus: %d\n", getRaw, angle, magnetic_status);
         */
-       
+        /*
         //PIO版本
-        volatile int32_t raw_value = sensor.readWithPIO(); // 获取原始数据值
-        //int32_t getRaw = raw_value >> (24 - MT6701_DATA_BITS);
-        printf("Raw: %-7lu\n", raw_value);
-
-        sleep_ms(100);
+        volatile int32_t raw_value0 = sensor.readWithPIO(); // 获取原始数据值
+        int32_t getRaw = raw_value0 >> (24 - MT6701_DATA_BITS);
+        printf("Raw: %-7lu\n", getRaw);
+        */
+        
         /*
         //DMA版本
         sensor.DMA_READ(); // 触发 DMA 读取
@@ -69,6 +70,13 @@ int main() {
         uint8_t status = (getRaw << 14) >> 6 ; 
         printf("Raw: %-5lu | Angle: %.2f degrees | MagneticStatus: %d\n", getRaw, angle, status);
         */
+        
+        //DMA&PIO超强版本
+        sensor.ssiRead();
+        sensor.processData();
+        volatile float raw_value1 = sensor.getAccumulateAngle();
+        printf("Raw: %.2f\n", raw_value1);
+
     }
     
     return 0;

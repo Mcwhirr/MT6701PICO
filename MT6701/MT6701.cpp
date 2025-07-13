@@ -7,7 +7,17 @@ MT6701::MT6701(/* args */)
 
 }
 
+MT6701::~MT6701()
+{
+
+}
+
 void MT6701::initSSI()
+{
+    transportStart();            
+}
+
+void MT6701::initDMA()
 {
     spi_init(SPI_PORT, 4*1000*1000);
     spi_set_format(SPI_PORT, 8, SPI_CPOL_0, SPI_CPHA_1, SPI_MSB_FIRST);
@@ -22,11 +32,9 @@ void MT6701::initSSI()
 
 }
 
-void MT6701::PIOinit()
+void MT6701::initPIO()
 {
     pio = pio0;
-    //sm = 0;
-    dmaChannel = 0;
     // &PIOTest_program 是 PIO 程序的汇编代码地址。
     // 使用 pio_add_program 函数将程序（汇编器转换后的二进制代码）加载到 PIO。
     // 该函数会返回程序的起始位置，我们将其保存在 offset 变量中。
@@ -39,7 +47,7 @@ void MT6701::PIOinit()
 
 }
 
-uint32_t MT6701::readData()
+uint32_t MT6701::readDMAData()
 {
     uint8_t rx_data[3]; // 读取3个字节 (24位) 来容纳24位数据
     // 1. 将 CS 拉低，开始通信
@@ -51,9 +59,9 @@ uint32_t MT6701::readData()
     csDeselect();
     // 4. 将接收到的3个字节合并成一个32位整数
     // MT6701 的数据是 MSB first (高位在前)
-    raw_value = (rx_data[0] << 16) | (rx_data[1] << 8) | rx_data[2];
+    rawValue = (rx_data[0] << 16) | (rx_data[1] << 8) | rx_data[2];
     
-    return raw_value;
+    return rawValue;
 }
 
 void MT6701::csSelect()
@@ -72,21 +80,13 @@ void MT6701::csDeselect()
 
 uint32_t MT6701::getRawValue()
 {
-    raw_value >>= (24 - MT6701_DATA_BITS);
-    return raw_value;
+    //rawValue >>= (24 - MT6701_DATA_BITS);
+    return rawValue;
 }
 
 float MT6701::getAccumulateAngle()
 {
-    uint32_t raw_data = readData();
-    raw_data >>= (24 - MT6701_DATA_BITS);
-
-    // 计算最大原始值 (2^14)
-    const uint32_t max_raw_value = (1 << MT6701_DATA_BITS);
-    // 将原始值映射到 0-360 度
-    float angle = (float)raw_data / (float)max_raw_value * 360.0f;
-
-    return angle;
+    return angleValue;
 }
 
 float MT6701::getAbsoluteAngle()
@@ -106,7 +106,7 @@ float MT6701::getAbsoluteRadian()
 
 uint8_t MT6701::getMagneticFieldStatus()
 {
-    uint8_t status = (raw_value << 14) >> 6 ; // 假设状态位在最低两位
+    uint8_t status = (rawValue << 14) >> 6 ; // 假设状态位在最低两位
 
     return status;
 }
@@ -167,6 +167,7 @@ bool MT6701::DMA_READ()
     dma_channel_wait_for_finish_blocking(dataChannelRX); // 等待接收通道完成
 
     csDeselect(); // 取消选择芯片，结束通信
+
     /*
     dma_channel_set_irq0_enabled(dataChannelRX, true); // 告诉DMA在通道完成一个块时触发IRQ线0
     irq_set_exclusive_handler(DMA_IRQ_0, [this]() {
@@ -184,20 +185,76 @@ bool MT6701::DMA_READ()
     return true; // 返回 true 表示 DMA 请求已设置
 }
 
-uint32_t MT6701::DMAProcessData()
+uint32_t MT6701::makeRawDMAValue()
 {
-    raw_value = (rxBuf[0] << 16) | (rxBuf[1] << 8) | rxBuf[2];
-    
-    return raw_value;
+    rawValue = (rxBuf[0] << 16) | (rxBuf[1] << 8) | rxBuf[2];
+    return rawValue;
 }
 
 uint32_t MT6701::readWithPIO()
 {
-    raw_value = ssi_CPOL0_CPHA1_WITH_CS_Read(pio,sm);
-    return raw_value;
+    rawValue = ssi_CPOL0_CPHA1_WITH_CS_Read(pio,sm);
+    return rawValue;
 }
 
-MT6701::~MT6701()
+void MT6701::transportStart()
 {
+    pio = pio0;
+
+    // &PIOTest_program 是 PIO 程序的汇编代码地址。使用 pio_add_program 函数将程序（汇编器转换后的二进制代码）加载到 PIO。
+    // 该函数会返回程序的起始位置，我们将其保存在 offset 变量中。
+    offset = pio_add_program(pio, &ssi_CPOL0_CPHA1_WITH_CS_program);
+    sm = pio_claim_unused_sm(pio,true);
+
+    //pio选择，状态机，数据引脚，时钟引脚，时钟分频
+    ssi_CPOL0_CPHA1_WITH_CS_Init(pio,sm,offset, PIN_MISO, PIN_SCK, 5.f);
+
+    //1.声明DMA通道
+    pioDMAChannel = dma_claim_unused_channel(true); 
+    //2.获取配置
+    dma_channel_config PIO_DMA_CHANNEL = dma_channel_get_default_config(pioDMAChannel); 
+    //3.依次填写配置
+    channel_config_set_transfer_data_size(&PIO_DMA_CHANNEL,DMA_SIZE_32);
+    channel_config_set_read_increment(&PIO_DMA_CHANNEL,false); //设置读取地址递增,不递增
+    channel_config_set_write_increment(&PIO_DMA_CHANNEL,false); //缓冲区的写入地址不递增
+    channel_config_set_dreq(&PIO_DMA_CHANNEL,pio_get_dreq(pio,sm,false));
+    //4.填写DMA通道配置
+    dma_channel_configure(
+        pioDMAChannel,
+        &PIO_DMA_CHANNEL,
+        &rawValue,
+        &pio->rxf[sm],
+        1,
+        true
+    );
+    //5.启动DMA通道
+    //dma_channel_start(pioDMAChannel);
+
+    //6.释放DMA通道
+    //dma_channel_unclaim(dataChannelTX);
+}
+
+void MT6701::ssiRead()
+{
+    dma_channel_start(pioDMAChannel);
+    // 等待DMA完成并检查结果
+    if (dma_channel_is_busy(pioDMAChannel)) {
+        dma_channel_wait_for_finish_blocking(pioDMAChannel);
+        return;
+    }
+    return;
+}
+
+void MT6701::processData()
+{
+    angleRawData = rawValue >> (24 - MT6701_DATA_BITS);
+    // 计算最大原始值 (2^14)
+    const uint32_t max_raw_value = 16384;
+    // 将原始值映射到 0-360 度
+    angleValue = (float)(angleRawData / 16384.0f) * 360.0f;
+    // 获取磁力状态 假设状态位在最低两位
+    magneticStatus = (rawValue << 14) >> 6;
+    // 获取CRC
+    crcCode = (rawValue << 18) >> 2;
 
 }
