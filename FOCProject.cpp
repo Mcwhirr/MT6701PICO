@@ -4,16 +4,10 @@
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
 #include "MT6701/MT6701.h"
-
 #include "MT6701.pio.h"
-// --- 配置 ---
+
 // 使用 SPI0 实例
 #define SPI_PORT spi0
-
-// 定义引脚 (根据您的硬件连接修改)
-#define PIN_MISO 6 // SPI0 RX
-#define PIN_SCK  7 // SPI0 SCK
-#define PIN_CS   8 // Chip Select, 使用普通 GPIO
 
 // MT6701 数据位数 (根据您的传感器型号和配置)
 #define MT6701_DATA_BITS 14
@@ -27,19 +21,14 @@ int main() {
     // 初始化标准 IO (用于 printf)
     stdio_init_all();
 
-    gpio_put(18, 1); // CSn高电平
-    gpio_put(17, 0); // SCK低电平
-
-
-    
     // 等待几秒，方便打开串口监视器
     sleep_ms(2000);
     printf("MT6701 Angle Sensor Reader\n");
 
     MT6701& sensor = MT6701::getInstance(); // 获取单例实例
-    //sensor.initSSI(); // 初始化 SP
-    //sensor.initPIO();  //PIO初始化
     sensor.initSSI();
+    //sensor.initDMA(); // 初始化 SP
+    //sensor.initPIO();  //PIO初始化
 
     // 主循环
     while (1) {
@@ -76,6 +65,9 @@ int main() {
         sensor.processData();
         volatile float raw_value1 = sensor.getAccumulateAngle();
         printf("Raw: %.2f\n", raw_value1);
+
+        //PWM
+        
 
     }
     
